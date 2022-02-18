@@ -1,0 +1,90 @@
+/************************************************************
+ * Copyright Klepsydra Technologies GmbH 2020-2022
+ * 
+ * Candidate Test 2: Reentrant Lock.
+ * 
+ * A reentrant lock is one where a process can claim the lock
+ * multiple times without blocking on itself, while preventing
+ * access to the same resource from other threads.
+ * 
+ * The goal of this exercise is to implement a reentrant lock 
+ * and make use of it in the example provided in the main method.
+ * 
+ * Instructions:
+ * 
+ * 1. Look careful and implement the missing parts as per comments.
+ * This includes: Lock class, ReentrantLock class implementation (which derives from Lock),
+ * SharedClass constructor and instantiation in main method.
+ * 
+ * 2. You may use C++11 features like std::mutex, thread and atomic. However,
+ * DO NOT use std::recursive_mutex as implementation.
+ * 
+ * 4. Create a CMAKE file for the compilation of the code. The example needs compiled
+ * with no errors, run and complete successfully without segfaults or exceptions.
+ * 
+ * 5. Optional: write some simple unit tests for the ReentrantLock.
+ * 
+*************************************************************/
+
+
+#include <iostream>
+#include <thread>
+
+class Lock {
+
+public:
+   // Make this class able to have derived classes.
+   void lock();
+   void unlock(); 
+
+}
+ 
+// Your implementation. Complete missing elements.
+class ReentrantLock {
+}
+ 
+ 
+class SharedClass {
+
+public:
+
+	// Complete constructor
+	SharedClass(Lock * lock) {}
+
+    void functionA() {
+      lock->lock();
+
+      shared = "functionA";
+      std::cout << "in functionA, shared variable is now " << shared << '\n';
+
+      lock->unlock();
+    }
+
+    void functionB() {
+      lock->lock();
+
+      shared = "functionB";
+      std::cout << "in functionB, shared variable is now " << shared << '\n';
+      functionA();
+      std::cout << "back in functionB, shared variable is " << shared << '\n';
+
+      lock->unlock();
+    };
+
+private:
+    Lock * lock;
+    std::string shared;
+
+};
+ 
+int main() 
+{
+	// Complete missing elements
+    SharedClass sharedInstance(nullptr);
+
+    std::thread t1(&SharedClass::functionA, &sharedInstance);
+    std::thread t2(&SharedClass::functionB, &sharedInstance);
+
+    t1.join();
+    t2.join();
+}
