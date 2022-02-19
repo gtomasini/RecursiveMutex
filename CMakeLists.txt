@@ -16,14 +16,14 @@ find_package(Threads)
 set(THREADS_PREFER_PTHREAD_FLAG true)
 
 if(MSVC)
-  add_compile_options(/W3)
+	add_compile_options(/W3)
 else()
 	set(MY_FLAGS -Wall -pedantic)
 	add_compile_options(${MY_FLAGS})
 	add_compile_options("$<$<CONFIG:DEBUG>:-g>")
 endif()
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 add_executable(recursiveLock RecursiveLock.cpp)
 target_link_libraries(recursiveLock ${CMAKE_THREAD_LIBS_INIT} )
