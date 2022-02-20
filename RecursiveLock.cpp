@@ -12,7 +12,17 @@
 
 using namespace std::chrono_literals;
 
-#define DEBUG
+//I did'nt implement formal Unit Tests because I had not enough time
+// but I did a kind of UTs using assert
+// 
+// NOTICE: I implemented the lock primitive with a configurable timeout (5secs default)
+// after that timeout lock throws an exception on the wait trhread
+// Thats is because I think is better in order to debug and avoid
+// that bad used of lock/unlocks ends in a deadlock, always is better to
+// throw an exception if something is wrong instead do nothing.
+// In any case that exception could be cached and and maybe recover from the problem 
+// z
+//#define DEBUG
 
 #if !defined(__PRETTY_FUNCTION__) && !defined(__GNUC__)
 #define __PRETTY_FUNCTION__ __FUNCSIG__
@@ -68,7 +78,7 @@ ReentrantLock::lock() noexcept(false) {
         return;
     }
 
-    if ( _owner == std::this_thread::get_id()) { 
+    if ( _owner == pid) { 
         // recursive mutex was mine, so I keep it
         ++_count;
         DBG(pid << ", mtx is still mine, count: " << _count);
@@ -96,7 +106,7 @@ ReentrantLock::unlock() {
 
     std::unique_lock<std::mutex> guard(_mutex);
     // not mine, bugger off
-    if (_count>0 && _owner != std::this_thread::get_id()) {
+    if (_count>0 && _owner != pid) {
         DBG(pid << ", [unlock] mtx is taked by thr("<<_owner<<")");
         return;
     }
@@ -214,7 +224,7 @@ int main() {
     assert(lock.getCount() == 0);
 
     {
-        std::cout << "\nlast test (reentrant)...\n";
+        std::cout << "\nlast test...\n";
 
         std::thread t1(&SharedClass::fTestA, &sharedInstance, 0);
         bool st = false;
