@@ -8,10 +8,11 @@
 #include <cassert>
 #include <chrono>
 #include <fstream>
+#include <stdexcept>
 
 using namespace std::chrono_literals;
 
-//#define DEBUG
+#define DEBUG
 
 #if !defined(__PRETTY_FUNCTION__) && !defined(__GNUC__)
 #define __PRETTY_FUNCTION__ __FUNCSIG__
@@ -26,92 +27,77 @@ using namespace std::chrono_literals;
 // Make this class able to have derived classes.
 class Lock {
 public:
-
-    virtual void lock();
-    virtual void unlock(); 
-    ~Lock() {}
+    virtual void lock()=0;
+    virtual void unlock()=0; 
+ 
 protected:
     std::mutex _mutex;
 };
 
-void Lock::lock(){
-    _mutex.lock();
-}
 
-void Lock::unlock() {
-    _mutex.unlock();
-}
- 
 // Your implementation. Complete missing elements.
 class ReentrantLock : public Lock {
 
 public:
-    ReentrantLock(){};
-    virtual ~ReentrantLock(){}
-    void lock() override;
-    void unlock() override;
-
-    bool getTimedOut() {
-        auto tmp = timed_out;
-        timed_out = false;
-        return tmp;
+    virtual void lock() noexcept(false) override;
+    virtual void unlock() override;
+    auto getCount() const { return _count; }
+    auto getOwner() const { return _owner; }
+    void setLockTimeout(std::chrono::seconds t) {
+        _lockTimeout = t;
     }
+    std::chrono::seconds _lockTimeout = std::chrono::seconds(5);
 
 protected:
-    uint16_t _count=0; ///< Informative. My be used with explicit scoping 
-    std::thread::id _ownerTID;
+    uint16_t _count = 0;
+    std::thread::id _owner;
     std::condition_variable _cv;
-    bool   timed_out=false;
 };
 
 void 
-ReentrantLock::lock() {
+ReentrantLock::lock() noexcept(false) {
     const auto pid = std::this_thread::get_id();
+    DBG(pid << ", " << __PRETTY_FUNCTION__);
     std::unique_lock<std::mutex> _lk(_mutex);
-
-    DBG(pid << ", "<<__PRETTY_FUNCTION__);
     
     if (_count == 0) {
-        // recursive mutex is free, so take it
-        ++_count;
-        _ownerTID = pid;
+        // recursive mutex is free, so I take it
+        _count=1;
+        _owner = pid;
         DBG(pid << ", mtx is free, got it, count: " << _count);
         return;
     }
 
-    if ( _ownerTID == std::this_thread::get_id()) { 
-        // recursive mutex was mine
+    if ( _owner == std::this_thread::get_id()) { 
+        // recursive mutex was mine, so I keep it
         ++_count;
         DBG(pid << ", mtx is still mine, count: " << _count);
         return;
     }
 
-    DBG (pid <<", mtx is taked by thr("<<_ownerTID<<"), count: " << _count);
     // recursive mutex is taken by some other thread
+    DBG (pid <<", mtx is taked by thr("<<_owner<<"), count: " << _count);
 
-    //5 secs of timeout...
-    if (_cv.wait_for(_lk, 5000ms, [&] {return _count == 0; })) {
+    if (_cv.wait_for(_lk, _lockTimeout, [&] {return _count == 0; })) {
         ++_count;
-        _ownerTID = pid;
+        _owner = pid;
         DBG( pid << ", finished waiting, mtx is mine now, count:" << _count);
     }
     else {
         std::cerr << pid << " timed out Error! count: " << _count << '\n';
-        timed_out = true;
+        throw std::runtime_error("timeod out wait");
     }
 }
  
 void 
 ReentrantLock::unlock() {
     const auto pid = std::this_thread::get_id();
-
-    std::unique_lock<std::mutex> guard(_mutex);
-
     DBG(pid << ", " << __PRETTY_FUNCTION__);
 
+    std::unique_lock<std::mutex> guard(_mutex);
     // not mine, bugger off
-    if (_count>0 && _ownerTID != std::this_thread::get_id()) {
-        DBG(pid << ", [unlock] mtx is taked by thr("<<_ownerTID<<")");
+    if (_count>0 && _owner != std::this_thread::get_id()) {
+        DBG(pid << ", [unlock] mtx is taked by thr("<<_owner<<")");
         return;
     }
 
@@ -129,18 +115,18 @@ ReentrantLock::unlock() {
 
 class SharedClass {
 public:
-    SharedClass(Lock* lock):_lock(lock){}
+    SharedClass(Lock *lock):_lock(lock){}
 
-    void functionA (uint8_t k=0) {
+    //k is the number of times that calls to itself recursively
+    void functionA (uint16_t k=0) {
         const auto pid = std::this_thread::get_id();
         DBG(pid << ", " << __PRETTY_FUNCTION__);
         assert(_lock != nullptr);
         _lock->lock();
-        _sharedStr = "functionA-x";
-        _sharedStr[10] = '0' + k;
+        _sharedStr = "functionA-" + std::to_string(k);
         std::cout << pid <<", in functionA, shared variable is now " << _sharedStr << '\n';
      
-        if ( k > 0) functionA(k - 1);
+        if (k > 0) functionA(--k);//reentrant, when k reachs 0 it returns
         _lock->unlock();
     }
   
@@ -156,34 +142,90 @@ public:
         _lock->unlock();
     };
 
+    //just for test
+    void fTestA(uint16_t k = 0) {
+        const auto pid = std::this_thread::get_id();
+        DBG(pid << ", " << __PRETTY_FUNCTION__);
+        assert(_lock != nullptr);
+        _lock->lock();
+        _sharedStr = "TEST_A-" + std::to_string(k);
+        std::cout << pid << ", in fTestA, shared variable is now " << _sharedStr << '\n';
+        std::this_thread::sleep_for(5550ms);
+        if (k > 0) functionA(k - 1);
+        _lock->unlock();
+    }
+
+    void fTestB(bool &result) {
+        result = false;
+        try {
+            const auto pid = std::this_thread::get_id();
+            DBG(pid << ", " << __PRETTY_FUNCTION__);
+            assert(_lock != nullptr);
+            _lock->lock();
+            _sharedStr = "TEST_B";
+            std::cout << pid << ", in fTestB, shared variable is now " << _sharedStr << '\n';
+            fTestA();
+            std::cout << pid << ", back in fTestB, shared variable is " << _sharedStr << '\n';
+            _lock->unlock();
+        }
+        catch (std::exception& e) {
+            std::cerr << "fTestB exception: " << e.what() << std::endl;
+            result=true;
+        }
+    };
 private:
     Lock *_lock;
     std::string _sharedStr;
 };
- 
+
+
 int main() {
-  ReentrantLock lock; 
+    ReentrantLock lock; 
 
-  SharedClass sharedInstance(&lock);
-  {
-      std::cout << "\nfirst test...\n";
+    SharedClass sharedInstance(&lock);
+    {
+        std::cout << "\nfirst test (reentrant)...\n";
   
-      std::thread t1(&SharedClass::functionA, &sharedInstance, 3);
-      std::thread t2(&SharedClass::functionB, &sharedInstance);
-  
-      t1.join();
-      t2.join();
-  }
+        std::thread t1(&SharedClass::functionA, &sharedInstance, 3);
+        std::thread t2(&SharedClass::functionB, &sharedInstance);
 
-  {
-      std::cout << "\n\nsecond test...\n";
+        t1.join();
+        t2.join();
+        assert(lock.getCount() == 0);
+    }
 
-      std::thread t1(&SharedClass::functionA, &sharedInstance, 0);
-      std::thread t2(&SharedClass::functionB, &sharedInstance);
+    {
+        std::cout << "\n\nsecond test (original)...\n";
 
-      t1.join();
-      t2.join();
-  }
+        std::thread t1(&SharedClass::functionA, &sharedInstance, 0);
+        std::thread t2(&SharedClass::functionB, &sharedInstance);
 
-  return EXIT_SUCCESS;
+        t1.join();
+        t2.join();
+        assert(lock.getCount() == 0);
+    }
+    
+    {
+        std::cout << "\n\nthird test (2 guards)...\n";
+        std::lock_guard<ReentrantLock> myGuard(lock);
+        std::lock_guard<ReentrantLock> myGuard2(lock);
+        assert(lock.getCount() == 2);
+    }
+    assert(lock.getCount() == 0);
+
+    {
+        std::cout << "\nlast test (reentrant)...\n";
+
+        std::thread t1(&SharedClass::fTestA, &sharedInstance, 0);
+        bool st = false;
+        std::thread t2(&SharedClass::fTestB, &sharedInstance, std::ref(st));
+        assert(t1.get_id() == lock.getOwner());
+        t1.join();
+        t2.join();
+        assert(st);
+        assert(lock.getCount() == 0);
+    }
+
+    
+    return EXIT_SUCCESS;
 }
