@@ -21,7 +21,7 @@ using namespace std::chrono_literals;
 // that bad used of lock/unlocks ends in a deadlock, always is better to
 // throw an exception if something is wrong instead do nothing.
 // In any case that exception could be cached and and maybe recover from the problem 
-// z
+// 
 //#define DEBUG
 
 #if !defined(__PRETTY_FUNCTION__) && !defined(__GNUC__)
@@ -39,6 +39,7 @@ class Lock {
 public:
     virtual void lock()=0;
     virtual void unlock()=0; 
+
  
 protected:
     std::mutex _mutex;
@@ -56,9 +57,10 @@ public:
     void setLockTimeout(std::chrono::seconds t) {
         _lockTimeout = t;
     }
-    std::chrono::seconds _lockTimeout = std::chrono::seconds(5);
+    virtual ~ReentrantLock() {}
 
-protected:
+ protected:
+    std::chrono::seconds _lockTimeout = std::chrono::seconds(5);
     uint16_t _count = 0;
     std::thread::id _owner;
     std::condition_variable _cv;
@@ -229,6 +231,7 @@ int main() {
         std::thread t1(&SharedClass::fTestA, &sharedInstance, 0);
         bool st = false;
         std::thread t2(&SharedClass::fTestB, &sharedInstance, std::ref(st));
+        std::this_thread::sleep_for(500ms);
         assert(t1.get_id() == lock.getOwner());
         t1.join();
         t2.join();
